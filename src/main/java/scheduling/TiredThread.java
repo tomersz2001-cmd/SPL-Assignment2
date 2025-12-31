@@ -7,7 +7,8 @@ import java.util.concurrent.atomic.AtomicLong;
 
 public class TiredThread extends Thread implements Comparable<TiredThread> {
 
-    private static final Runnable POISON_PILL = () -> {}; // Special task to signal shutdown
+    private static final Runnable POISON_PILL = () -> {
+    }; // Special task to signal shutdown
 
     private final int id; // Worker index assigned by the executor
     private final double fatigueFactor; // Multiplier for fatigue calculation
@@ -17,7 +18,8 @@ public class TiredThread extends Thread implements Comparable<TiredThread> {
     // Single-slot handoff queue; executor will put tasks here
     private final BlockingQueue<Runnable> handoff = new ArrayBlockingQueue<>(1);
 
-    private final AtomicBoolean busy = new AtomicBoolean(false); // Indicates if the worker is currently executing a task
+    private final AtomicBoolean busy = new AtomicBoolean(false); // Indicates if the worker is currently executing a
+                                                                 // task
 
     private final AtomicLong timeUsed = new AtomicLong(0); // Total time spent executing tasks
     private final AtomicLong timeIdle = new AtomicLong(0); // Total time spent idle
@@ -56,7 +58,9 @@ public class TiredThread extends Thread implements Comparable<TiredThread> {
      * it throws IllegalStateException.
      */
     public void newTask(Runnable task) {
-       // TODO
+        // TODO
+        this.handoff.add(task);
+        this.busy.set(true);
     }
 
     /**
@@ -64,17 +68,64 @@ public class TiredThread extends Thread implements Comparable<TiredThread> {
      * Inserts a poison pill so the worker wakes up and exits.
      */
     public void shutdown() {
-       // TODO
+        // TODO
+        alive.set(false);
+        try {
+            this.handoff.put(POISON_PILL);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
     }
 
     @Override
     public void run() {
-       // TODO
+
+        long startIdle = System.nanoTime();
+
+        try {
+            while (alive.get() || !handoff.isEmpty()) {
+                Runnable task;
+
+                try {
+                    task = handoff.take();
+                } catch (InterruptedException e) {
+                    if (!alive.get())
+                        break;
+                    continue;
+                }
+
+                if (task == POISON_PILL) {
+                    break;
+                }
+
+                long idleDuration = System.nanoTime() - startIdle;
+                timeIdle.addAndGet(idleDuration);
+
+                synchronized (this) {
+                    busy.set(true);
+                }
+
+                long startWork = System.nanoTime();
+                try {
+                    task.run();
+                } finally {
+                    long workDuration = System.nanoTime() - startWork;
+                    timeUsed.addAndGet(workDuration);
+
+                    synchronized (this) {
+                        busy.set(false);
+                    }
+                    startIdle = System.nanoTime();
+                }
+            }
+        } finally {
+            alive.set(false);
+        }
     }
 
     @Override
     public int compareTo(TiredThread o) {
         // TODO
-        return 0;
+        return Double.compare(this.getFatigue(), o.getFatigue());
     }
 }
